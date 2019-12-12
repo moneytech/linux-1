@@ -38,7 +38,6 @@
 #include "kfd_dbgmgr.h"
 #include "kfd_dbgdev.h"
 #include "kfd_device_queue_manager.h"
-#include "../../radeon/cik_reg.h"
 
 static void dbgdev_address_watch_disable_nodiq(struct kfd_dev *dev)
 {
@@ -95,7 +94,7 @@ static int dbgdev_diq_submit_ib(struct kfd_dbgdev *dbgdev,
 	ib_packet->bitfields3.ib_base_hi = largep->u.high_part;
 
 	ib_packet->control = (1 << 23) | (1 << 31) |
-			((size_in_bytes / sizeof(uint32_t)) & 0xfffff);
+			((size_in_bytes / 4) & 0xfffff);
 
 	ib_packet->bitfields5.pasid = pasid;
 
@@ -126,8 +125,7 @@ static int dbgdev_diq_submit_ib(struct kfd_dbgdev *dbgdev,
 
 	rm_packet->header.opcode = IT_RELEASE_MEM;
 	rm_packet->header.type = PM4_TYPE_3;
-	rm_packet->header.count = sizeof(struct pm4__release_mem) /
-					sizeof(unsigned int) - 2;
+	rm_packet->header.count = sizeof(struct pm4__release_mem) / 4 - 2;
 
 	rm_packet->bitfields2.event_type = CACHE_FLUSH_AND_INV_TS_EVENT;
 	rm_packet->bitfields2.event_index =
@@ -652,8 +650,7 @@ static int dbgdev_wave_control_diq(struct kfd_dbgdev *dbgdev,
 	packets_vec[0].header.opcode = IT_SET_UCONFIG_REG;
 	packets_vec[0].header.type = PM4_TYPE_3;
 	packets_vec[0].bitfields2.reg_offset =
-			GRBM_GFX_INDEX / (sizeof(uint32_t)) -
-				USERCONFIG_REG_BASE;
+			GRBM_GFX_INDEX / 4 - USERCONFIG_REG_BASE;
 
 	packets_vec[0].bitfields2.insert_vmid = 0;
 	packets_vec[0].reg_data[0] = reg_gfx_index.u32All;
@@ -661,8 +658,7 @@ static int dbgdev_wave_control_diq(struct kfd_dbgdev *dbgdev,
 	packets_vec[1].header.count = 1;
 	packets_vec[1].header.opcode = IT_SET_CONFIG_REG;
 	packets_vec[1].header.type = PM4_TYPE_3;
-	packets_vec[1].bitfields2.reg_offset = SQ_CMD / (sizeof(uint32_t)) -
-						AMD_CONFIG_REG_BASE;
+	packets_vec[1].bitfields2.reg_offset = SQ_CMD / 4 - AMD_CONFIG_REG_BASE;
 
 	packets_vec[1].bitfields2.vmid_shift = SQ_CMD_VMID_OFFSET;
 	packets_vec[1].bitfields2.insert_vmid = 1;
@@ -678,8 +674,7 @@ static int dbgdev_wave_control_diq(struct kfd_dbgdev *dbgdev,
 
 	packets_vec[2].ordinal1 = packets_vec[0].ordinal1;
 	packets_vec[2].bitfields2.reg_offset =
-				GRBM_GFX_INDEX / (sizeof(uint32_t)) -
-					USERCONFIG_REG_BASE;
+				GRBM_GFX_INDEX / 4 - USERCONFIG_REG_BASE;
 
 	packets_vec[2].bitfields2.insert_vmid = 0;
 	packets_vec[2].reg_data[0] = reg_gfx_index.u32All;
@@ -766,6 +761,7 @@ int dbgdev_wave_reset_wavefronts(struct kfd_dev *dev, struct kfd_process *p)
 {
 	int status = 0;
 	unsigned int vmid;
+	uint16_t queried_pasid;
 	union SQ_CMD_BITS reg_sq_cmd;
 	union GRBM_GFX_INDEX_BITS reg_gfx_index;
 	struct kfd_process_device *pdd;
@@ -787,19 +783,18 @@ int dbgdev_wave_reset_wavefronts(struct kfd_dev *dev, struct kfd_process *p)
 	 */
 
 	for (vmid = first_vmid_to_scan; vmid <= last_vmid_to_scan; vmid++) {
-		if (dev->kfd2kgd->get_atc_vmid_pasid_mapping_valid
-				(dev->kgd, vmid)) {
-			if (dev->kfd2kgd->get_atc_vmid_pasid_mapping_pasid
-					(dev->kgd, vmid) == p->pasid) {
-				pr_debug("Killing wave fronts of vmid %d and pasid %d\n",
-						vmid, p->pasid);
-				break;
-			}
+		status = dev->kfd2kgd->get_atc_vmid_pasid_mapping_info
+				(dev->kgd, vmid, &queried_pasid);
+
+		if (status && queried_pasid == p->pasid) {
+			pr_debug("Killing wave fronts of vmid %d and pasid 0x%x\n",
+					vmid, p->pasid);
+			break;
 		}
 	}
 
 	if (vmid > last_vmid_to_scan) {
-		pr_err("Didn't find vmid for pasid %d\n", p->pasid);
+		pr_err("Didn't find vmid for pasid 0x%x\n", p->pasid);
 		return -EFAULT;
 	}
 

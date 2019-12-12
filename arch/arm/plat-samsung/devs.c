@@ -1,14 +1,9 @@
-/* linux/arch/arm/plat-samsung/devs.c
- *
- * Copyright (c) 2011 Samsung Electronics Co., Ltd.
- *		http://www.samsung.com
- *
- * Base SAMSUNG platform device definitions
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License version 2 as
- * published by the Free Software Foundation.
-*/
+// SPDX-License-Identifier: GPL-2.0
+//
+// Copyright (c) 2011 Samsung Electronics Co., Ltd.
+//		http://www.samsung.com
+//
+// Base SAMSUNG platform device definitions
 
 #include <linux/kernel.h>
 #include <linux/types.h>
@@ -1015,9 +1010,9 @@ void __init dwc2_hsotg_set_platdata(struct dwc2_hsotg_plat *pd)
 	npd = s3c_set_platdata(pd, sizeof(*npd), &s3c_device_usb_hsotg);
 
 	if (!npd->phy_init)
-		npd->phy_init = s5p_usb_phy_init;
+		npd->phy_init = s3c_usb_phy_init;
 	if (!npd->phy_exit)
-		npd->phy_exit = s5p_usb_phy_exit;
+		npd->phy_exit = s3c_usb_phy_exit;
 }
 #endif /* CONFIG_S3C_DEV_USB_HSOTG */
 

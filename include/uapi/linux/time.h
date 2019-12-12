@@ -3,18 +3,18 @@
 #define _UAPI_LINUX_TIME_H
 
 #include <linux/types.h>
-
+#include <linux/time_types.h>
 
 #ifndef _STRUCT_TIMESPEC
 #define _STRUCT_TIMESPEC
 struct timespec {
-	__kernel_time_t	tv_sec;			/* seconds */
-	long		tv_nsec;		/* nanoseconds */
+	__kernel_old_time_t	tv_sec;		/* seconds */
+	long			tv_nsec;	/* nanoseconds */
 };
 #endif
 
 struct timeval {
-	__kernel_time_t		tv_sec;		/* seconds */
+	__kernel_old_time_t	tv_sec;		/* seconds */
 	__kernel_suseconds_t	tv_usec;	/* microseconds */
 };
 
@@ -22,7 +22,6 @@ struct timezone {
 	int	tz_minuteswest;	/* minutes west of Greenwich */
 	int	tz_dsttime;	/* type of dst correction */
 };
-
 
 /*
  * Names of the interval timers, and structure

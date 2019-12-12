@@ -1,16 +1,8 @@
+// SPDX-License-Identifier: GPL-2.0-only
 /*
  * phy-brcm-usb-init.c - Broadcom USB Phy chip specific init functions
  *
  * Copyright (C) 2014-2017 Broadcom
- *
- * This software is licensed under the terms of the GNU General Public
- * License version 2, as published by the Free Software Foundation, and
- * may be copied, distributed, and modified under those terms.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
  */
 
 /*
@@ -50,6 +42,8 @@
 #define   USB_CTRL_PLL_CTL_PLL_IDDQ_PWRDN_MASK		0x80000000 /* option */
 #define USB_CTRL_EBRIDGE		0x0c
 #define   USB_CTRL_EBRIDGE_ESTOP_SCB_REQ_MASK		0x00020000 /* option */
+#define USB_CTRL_OBRIDGE		0x10
+#define   USB_CTRL_OBRIDGE_LS_KEEP_ALIVE_MASK		0x08000000
 #define USB_CTRL_MDIO			0x14
 #define USB_CTRL_MDIO2			0x18
 #define USB_CTRL_UTMI_CTL_1		0x2c
@@ -71,6 +65,7 @@
 #define   USB_CTRL_USB30_CTL1_USB3_IPP_MASK		0x20000000 /* option */
 #define USB_CTRL_USB30_PCTL		0x70
 #define   USB_CTRL_USB30_PCTL_PHY3_SOFT_RESETB_MASK	0x00000002
+#define   USB_CTRL_USB30_PCTL_PHY3_IDDQ_OVERRIDE_MASK	0x00008000
 #define   USB_CTRL_USB30_PCTL_PHY3_SOFT_RESETB_P1_MASK	0x00020000
 #define USB_CTRL_USB_DEVICE_CTL1	0x90
 #define   USB_CTRL_USB_DEVICE_CTL1_PORT_MODE_MASK	0x00000003 /* option */
@@ -116,7 +111,6 @@ enum {
 	USB_CTRL_SETUP_STRAP_IPP_SEL_SELECTOR,
 	USB_CTRL_SETUP_OC3_DISABLE_SELECTOR,
 	USB_CTRL_PLL_CTL_PLL_IDDQ_PWRDN_SELECTOR,
-	USB_CTRL_EBRIDGE_ESTOP_SCB_REQ_SELECTOR,
 	USB_CTRL_USB_PM_BDC_SOFT_RESETB_SELECTOR,
 	USB_CTRL_USB_PM_XHC_SOFT_RESETB_SELECTOR,
 	USB_CTRL_USB_PM_USB_PWRDN_SELECTOR,
@@ -132,8 +126,8 @@ enum {
 	USB_CTRL_SELECTOR_COUNT,
 };
 
-#define USB_CTRL_REG(base, reg)	((void *)base + USB_CTRL_##reg)
-#define USB_XHCI_EC_REG(base, reg) ((void *)base + USB_XHCI_EC_##reg)
+#define USB_CTRL_REG(base, reg)	((void __iomem *)base + USB_CTRL_##reg)
+#define USB_XHCI_EC_REG(base, reg) ((void __iomem *)base + USB_XHCI_EC_##reg)
 #define USB_CTRL_MASK(reg, field) \
 	USB_CTRL_##reg##_##field##_MASK
 #define USB_CTRL_MASK_FAMILY(params, reg, field)			\
@@ -203,7 +197,6 @@ usb_reg_bits_map_table[BRCM_FAMILY_COUNT][USB_CTRL_SELECTOR_COUNT] = {
 		USB_CTRL_SETUP_STRAP_IPP_SEL_MASK,
 		USB_CTRL_SETUP_OC3_DISABLE_MASK,
 		0, /* USB_CTRL_PLL_CTL_PLL_IDDQ_PWRDN_MASK */
-		USB_CTRL_EBRIDGE_ESTOP_SCB_REQ_MASK,
 		0, /* USB_CTRL_USB_PM_BDC_SOFT_RESETB_MASK */
 		USB_CTRL_USB_PM_XHC_SOFT_RESETB_MASK,
 		USB_CTRL_USB_PM_USB_PWRDN_MASK,
@@ -225,7 +218,6 @@ usb_reg_bits_map_table[BRCM_FAMILY_COUNT][USB_CTRL_SELECTOR_COUNT] = {
 		0, /* USB_CTRL_SETUP_STRAP_IPP_SEL_MASK */
 		USB_CTRL_SETUP_OC3_DISABLE_MASK,
 		USB_CTRL_PLL_CTL_PLL_IDDQ_PWRDN_MASK,
-		USB_CTRL_EBRIDGE_ESTOP_SCB_REQ_MASK,
 		0, /* USB_CTRL_USB_PM_BDC_SOFT_RESETB_MASK */
 		USB_CTRL_USB_PM_XHC_SOFT_RESETB_VAR_MASK,
 		0, /* USB_CTRL_USB_PM_USB_PWRDN_MASK */
@@ -247,7 +239,6 @@ usb_reg_bits_map_table[BRCM_FAMILY_COUNT][USB_CTRL_SELECTOR_COUNT] = {
 		USB_CTRL_SETUP_STRAP_IPP_SEL_MASK,
 		USB_CTRL_SETUP_OC3_DISABLE_MASK,
 		0, /* USB_CTRL_PLL_CTL_PLL_IDDQ_PWRDN_MASK */
-		USB_CTRL_EBRIDGE_ESTOP_SCB_REQ_MASK,
 		USB_CTRL_USB_PM_BDC_SOFT_RESETB_MASK,
 		USB_CTRL_USB_PM_XHC_SOFT_RESETB_MASK,
 		USB_CTRL_USB_PM_USB_PWRDN_MASK,
@@ -269,7 +260,6 @@ usb_reg_bits_map_table[BRCM_FAMILY_COUNT][USB_CTRL_SELECTOR_COUNT] = {
 		0, /* USB_CTRL_SETUP_STRAP_IPP_SEL_MASK */
 		USB_CTRL_SETUP_OC3_DISABLE_MASK,
 		USB_CTRL_PLL_CTL_PLL_IDDQ_PWRDN_MASK,
-		USB_CTRL_EBRIDGE_ESTOP_SCB_REQ_MASK,
 		0, /* USB_CTRL_USB_PM_BDC_SOFT_RESETB_MASK */
 		USB_CTRL_USB_PM_XHC_SOFT_RESETB_VAR_MASK,
 		0, /* USB_CTRL_USB_PM_USB_PWRDN_MASK */
@@ -291,7 +281,6 @@ usb_reg_bits_map_table[BRCM_FAMILY_COUNT][USB_CTRL_SELECTOR_COUNT] = {
 		0, /* USB_CTRL_SETUP_STRAP_IPP_SEL_MASK */
 		USB_CTRL_SETUP_OC3_DISABLE_MASK,
 		0, /* USB_CTRL_PLL_CTL_PLL_IDDQ_PWRDN_MASK */
-		USB_CTRL_EBRIDGE_ESTOP_SCB_REQ_MASK,
 		0, /* USB_CTRL_USB_PM_BDC_SOFT_RESETB_MASK */
 		USB_CTRL_USB_PM_XHC_SOFT_RESETB_VAR_MASK,
 		USB_CTRL_USB_PM_USB_PWRDN_MASK,
@@ -313,7 +302,6 @@ usb_reg_bits_map_table[BRCM_FAMILY_COUNT][USB_CTRL_SELECTOR_COUNT] = {
 		0, /* USB_CTRL_SETUP_STRAP_IPP_SEL_MASK */
 		0, /* USB_CTRL_SETUP_OC3_DISABLE_MASK */
 		USB_CTRL_PLL_CTL_PLL_IDDQ_PWRDN_MASK,
-		0, /* USB_CTRL_EBRIDGE_ESTOP_SCB_REQ_MASK */
 		0, /* USB_CTRL_USB_PM_BDC_SOFT_RESETB_MASK */
 		0, /* USB_CTRL_USB_PM_XHC_SOFT_RESETB_MASK */
 		0, /* USB_CTRL_USB_PM_USB_PWRDN_MASK */
@@ -335,7 +323,6 @@ usb_reg_bits_map_table[BRCM_FAMILY_COUNT][USB_CTRL_SELECTOR_COUNT] = {
 		USB_CTRL_SETUP_STRAP_IPP_SEL_MASK,
 		USB_CTRL_SETUP_OC3_DISABLE_MASK,
 		0, /* USB_CTRL_PLL_CTL_PLL_IDDQ_PWRDN_MASK */
-		0, /* USB_CTRL_EBRIDGE_ESTOP_SCB_REQ_MASK */
 		USB_CTRL_USB_PM_BDC_SOFT_RESETB_MASK,
 		USB_CTRL_USB_PM_XHC_SOFT_RESETB_MASK,
 		USB_CTRL_USB_PM_USB_PWRDN_MASK,
@@ -357,7 +344,6 @@ usb_reg_bits_map_table[BRCM_FAMILY_COUNT][USB_CTRL_SELECTOR_COUNT] = {
 		0, /* USB_CTRL_SETUP_STRAP_IPP_SEL_MASK */
 		USB_CTRL_SETUP_OC3_DISABLE_MASK,
 		USB_CTRL_PLL_CTL_PLL_IDDQ_PWRDN_MASK,
-		0, /* USB_CTRL_EBRIDGE_ESTOP_SCB_REQ_MASK */
 		0, /* USB_CTRL_USB_PM_BDC_SOFT_RESETB_MASK */
 		0, /* USB_CTRL_USB_PM_XHC_SOFT_RESETB_MASK */
 		0, /* USB_CTRL_USB_PM_USB_PWRDN_MASK */
@@ -379,7 +365,6 @@ usb_reg_bits_map_table[BRCM_FAMILY_COUNT][USB_CTRL_SELECTOR_COUNT] = {
 		USB_CTRL_SETUP_STRAP_IPP_SEL_MASK,
 		USB_CTRL_SETUP_OC3_DISABLE_MASK,
 		0, /* USB_CTRL_PLL_CTL_PLL_IDDQ_PWRDN_MASK */
-		USB_CTRL_EBRIDGE_ESTOP_SCB_REQ_MASK,
 		USB_CTRL_USB_PM_BDC_SOFT_RESETB_MASK,
 		USB_CTRL_USB_PM_XHC_SOFT_RESETB_MASK,
 		USB_CTRL_USB_PM_USB_PWRDN_MASK,
@@ -401,7 +386,6 @@ usb_reg_bits_map_table[BRCM_FAMILY_COUNT][USB_CTRL_SELECTOR_COUNT] = {
 		USB_CTRL_SETUP_STRAP_IPP_SEL_MASK,
 		USB_CTRL_SETUP_OC3_DISABLE_MASK,
 		0, /* USB_CTRL_PLL_CTL_PLL_IDDQ_PWRDN_MASK */
-		USB_CTRL_EBRIDGE_ESTOP_SCB_REQ_MASK,
 		USB_CTRL_USB_PM_BDC_SOFT_RESETB_MASK,
 		USB_CTRL_USB_PM_XHC_SOFT_RESETB_MASK,
 		USB_CTRL_USB_PM_USB_PWRDN_MASK,
@@ -432,7 +416,7 @@ void usb_ctrl_unset_family(struct brcm_usb_init_params *params,
 			   u32 reg_offset, u32 field)
 {
 	u32 mask;
-	void *reg;
+	void __iomem *reg;
 
 	mask = params->usb_reg_bits_map[field];
 	reg = params->ctrl_regs + reg_offset;
@@ -444,7 +428,7 @@ void usb_ctrl_set_family(struct brcm_usb_init_params *params,
 			 u32 reg_offset, u32 field)
 {
 	u32 mask;
-	void *reg;
+	void __iomem *reg;
 
 	mask = params->usb_reg_bits_map[field];
 	reg = params->ctrl_regs + reg_offset;
@@ -723,7 +707,7 @@ static void brcmusb_usb3_otp_fix(struct brcm_usb_init_params *params)
 	void __iomem *xhci_ec_base = params->xhci_ec_regs;
 	u32 val;
 
-	if (params->family_id != 0x74371000 || xhci_ec_base == 0)
+	if (params->family_id != 0x74371000 || !xhci_ec_base)
 		return;
 	brcmusb_writel(0xa20c, USB_XHCI_EC_REG(xhci_ec_base, IRAADR));
 	val = brcmusb_readl(USB_XHCI_EC_REG(xhci_ec_base, IRADAT));
@@ -926,6 +910,7 @@ void brcm_usb_init_common(struct brcm_usb_init_params *params)
 			USB_CTRL_UNSET_FAMILY(params, USB_PM, BDC_SOFT_RESETB);
 			break;
 		default:
+			USB_CTRL_UNSET_FAMILY(params, USB_PM, BDC_SOFT_RESETB);
 			USB_CTRL_SET_FAMILY(params, USB_PM, BDC_SOFT_RESETB);
 		break;
 		}
@@ -952,18 +937,26 @@ void brcm_usb_init_eohci(struct brcm_usb_init_params *params)
 		 * Don't enable this so the memory controller doesn't read
 		 * into memory holes. NOTE: This bit is low true on 7366C0.
 		 */
-		USB_CTRL_SET_FAMILY(params, EBRIDGE, ESTOP_SCB_REQ);
+		USB_CTRL_SET(ctrl, EBRIDGE, ESTOP_SCB_REQ);
 
 	/* Setup the endian bits */
 	reg = brcmusb_readl(USB_CTRL_REG(ctrl, SETUP));
 	reg &= ~USB_CTRL_SETUP_ENDIAN_BITS;
 	reg |= USB_CTRL_MASK_FAMILY(params, SETUP, ENDIAN);
 	brcmusb_writel(reg, USB_CTRL_REG(ctrl, SETUP));
+
+	if (params->selected_family == BRCM_FAMILY_7271A0)
+		/* Enable LS keep alive fix for certain keyboards */
+		USB_CTRL_SET(ctrl, OBRIDGE, LS_KEEP_ALIVE);
 }
 
 void brcm_usb_init_xhci(struct brcm_usb_init_params *params)
 {
 	void __iomem *ctrl = params->ctrl_regs;
+
+	USB_CTRL_UNSET(ctrl, USB30_PCTL, PHY3_IDDQ_OVERRIDE);
+	/* 1 millisecond - for USB clocks to settle down */
+	usleep_range(1000, 2000);
 
 	if (BRCM_ID(params->family_id) == 0x7366) {
 		/*
@@ -1003,6 +996,7 @@ void brcm_usb_uninit_eohci(struct brcm_usb_init_params *params)
 void brcm_usb_uninit_xhci(struct brcm_usb_init_params *params)
 {
 	brcmusb_xhci_soft_reset(params, 1);
+	USB_CTRL_SET(params->ctrl_regs, USB30_PCTL, PHY3_IDDQ_OVERRIDE);
 }
 
 void brcm_usb_set_family_map(struct brcm_usb_init_params *params)

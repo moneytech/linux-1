@@ -1,15 +1,6 @@
+// SPDX-License-Identifier: GPL-2.0
 /* Copyright (c) 2012 - 2015 UNISYS CORPORATION
  * All rights reserved.
- *
- * This program is free software; you can redistribute it and/or modify it
- * under the terms and conditions of the GNU General Public License,
- * version 2, as published by the Free Software Foundation.
- *
- * This program is distributed in the hope that it will be useful, but
- * WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE, GOOD TITLE or
- * NON INFRINGEMENT.  See the GNU General Public License for more
- * details.
  */
 
 /* This driver lives in a spar partition, and registers to ethernet io
@@ -25,8 +16,8 @@
 #include <linux/kthread.h>
 #include <linux/skbuff.h>
 #include <linux/rtnetlink.h>
+#include <linux/visorbus.h>
 
-#include "visorbus.h"
 #include "iochannel.h"
 
 #define VISORNIC_INFINITE_RSP_WAIT 0
@@ -293,9 +284,9 @@ static int visor_copy_fragsinfo_from_skb(struct sk_buff *skb,
 		for (frag = 0; frag < numfrags; frag++) {
 			count = add_physinfo_entries(page_to_pfn(
 				  skb_frag_page(&skb_shinfo(skb)->frags[frag])),
-				  skb_shinfo(skb)->frags[frag].page_offset,
-				  skb_shinfo(skb)->frags[frag].size, count,
-				  frags_max, frags);
+				  skb_frag_off(&skb_shinfo(skb)->frags[frag]),
+				  skb_frag_size(&skb_shinfo(skb)->frags[frag]),
+				  count, frags_max, frags);
 			/* add_physinfo_entries only returns
 			 * zero if the frags array is out of room
 			 * That should never happen because we
@@ -858,7 +849,7 @@ static bool vnic_hit_low_watermark(struct visornic_devdata *devdata,
  *
  * Return: NETDEV_TX_OK.
  */
-static int visornic_xmit(struct sk_buff *skb, struct net_device *netdev)
+static netdev_tx_t visornic_xmit(struct sk_buff *skb, struct net_device *netdev)
 {
 	struct visornic_devdata *devdata;
 	int len, firstfraglen, padlen;
@@ -905,9 +896,7 @@ static int visornic_xmit(struct sk_buff *skb, struct net_device *netdev)
 	    ((skb_end_pointer(skb) - skb->data) >= ETH_MIN_PACKET_SIZE)) {
 		/* pad the packet out to minimum size */
 		padlen = ETH_MIN_PACKET_SIZE - len;
-		memset(&skb->data[len], 0, padlen);
-		skb->tail += padlen;
-		skb->len += padlen;
+		skb_put_zero(skb, padlen);
 		len += padlen;
 		firstfraglen += padlen;
 	}
@@ -1761,7 +1750,8 @@ static int visornic_poll(struct napi_struct *napi, int budget)
 }
 
 /* poll_for_irq	- checks the status of the response queue
- * @v: Void pointer to the visronic devdata struct.
+ * @t: pointer to the 'struct timer_list' from which we can retrieve the
+ *     the visornic devdata struct.
  *
  * Main function of the vnic_incoming thread. Periodically check the response
  * queue and drain it if needed.
@@ -1872,12 +1862,12 @@ static int visornic_probe(struct visor_device *dev)
 	skb_queue_head_init(&devdata->xmitbufhead);
 
 	/* create a cmdrsp we can use to post and unpost rcv buffers */
-	devdata->cmdrsp_rcv = kmalloc(SIZEOF_CMDRSP, GFP_ATOMIC);
+	devdata->cmdrsp_rcv = kmalloc(SIZEOF_CMDRSP, GFP_KERNEL);
 	if (!devdata->cmdrsp_rcv) {
 		err = -ENOMEM;
 		goto cleanup_rcvbuf;
 	}
-	devdata->xmit_cmdrsp = kmalloc(SIZEOF_CMDRSP, GFP_ATOMIC);
+	devdata->xmit_cmdrsp = kmalloc(SIZEOF_CMDRSP, GFP_KERNEL);
 	if (!devdata->xmit_cmdrsp) {
 		err = -ENOMEM;
 		goto cleanup_cmdrsp_rcv;
@@ -2104,7 +2094,7 @@ static int visornic_resume(struct visor_device *dev,
 	mod_timer(&devdata->irq_poll_timer, msecs_to_jiffies(2));
 
 	rtnl_lock();
-	dev_open(netdev);
+	dev_open(netdev, NULL);
 	rtnl_unlock();
 
 	complete_func(dev, 0);
@@ -2135,30 +2125,19 @@ static struct visor_driver visornic_driver = {
  */
 static int visornic_init(void)
 {
-	struct dentry *ret;
-	int err = -ENOMEM;
+	int err;
 
 	visornic_debugfs_dir = debugfs_create_dir("visornic", NULL);
-	if (!visornic_debugfs_dir)
-		return err;
 
-	ret = debugfs_create_file("info", 0400, visornic_debugfs_dir, NULL,
-				  &debugfs_info_fops);
-	if (!ret)
-		goto cleanup_debugfs;
-	ret = debugfs_create_file("enable_ints", 0200, visornic_debugfs_dir,
-				  NULL, &debugfs_enable_ints_fops);
-	if (!ret)
-		goto cleanup_debugfs;
+	debugfs_create_file("info", 0400, visornic_debugfs_dir, NULL,
+			    &debugfs_info_fops);
+	debugfs_create_file("enable_ints", 0200, visornic_debugfs_dir, NULL,
+			    &debugfs_enable_ints_fops);
 
 	err = visorbus_register_visor_driver(&visornic_driver);
 	if (err)
-		goto cleanup_debugfs;
+		debugfs_remove_recursive(visornic_debugfs_dir);
 
-	return 0;
-
-cleanup_debugfs:
-	debugfs_remove_recursive(visornic_debugfs_dir);
 	return err;
 }
 

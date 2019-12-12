@@ -8,6 +8,7 @@
  * kind, whether express or implied.
  */
 
+#include <dt-bindings/bus/ti-sysc.h>
 #include <dt-bindings/gpio/gpio.h>
 #include <dt-bindings/interrupt-controller/irq.h>
 #include <dt-bindings/pinctrl/omap.h>
@@ -502,6 +503,30 @@
 			status = "disabled";
 		};
 
+		/* Likely needs to be tagged disabled on HS devices */
+		rng_target: target-module@480a0000 {
+			compatible = "ti,sysc-omap2", "ti,sysc";
+			reg = <0x480a003c 0x4>,
+			      <0x480a0040 0x4>,
+			      <0x480a0044 0x4>;
+			reg-names = "rev", "sysc", "syss";
+			ti,sysc-mask = <(SYSC_OMAP2_AUTOIDLE)>;
+			ti,sysc-sidle = <SYSC_IDLE_FORCE>,
+					<SYSC_IDLE_NO>;
+			ti,syss-mask = <1>;
+			clocks = <&rng_ick>;
+			clock-names = "ick";
+			#address-cells = <1>;
+			#size-cells = <1>;
+			ranges = <0 0x480a0000 0x2000>;
+
+			rng: rng@0 {
+				compatible = "ti,omap2-rng";
+				reg = <0x0 0x2000>;
+				interrupts = <52>;
+			};
+		};
+
 		mcbsp2: mcbsp@49022000 {
 			compatible = "ti,omap3-mcbsp";
 			reg = <0x49022000 0xff>,
@@ -557,6 +582,7 @@
 			dma-names = "tx", "rx";
 			clocks = <&mcbsp4_fck>;
 			clock-names = "fck";
+			#sound-dai-cells = <0>;
 			status = "disabled";
 		};
 
@@ -585,20 +611,6 @@
 			interrupts = <49>;
 			dmas = <&sdma 69>;
 			dma-names = "rx";
-		};
-
-		smartreflex_core: smartreflex@480cb000 {
-			compatible = "ti,omap3-smartreflex-core";
-			ti,hwmods = "smartreflex_core";
-			reg = <0x480cb000 0x400>;
-			interrupts = <19>;
-		};
-
-		smartreflex_mpu_iva: smartreflex@480c9000 {
-			compatible = "ti,omap3-smartreflex-iva";
-			ti,hwmods = "smartreflex_mpu_iva";
-			reg = <0x480c9000 0x400>;
-			interrupts = <18>;
 		};
 
 		timer1: timer@48318000 {

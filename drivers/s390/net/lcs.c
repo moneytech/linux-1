@@ -504,7 +504,7 @@ lcs_clear_channel(struct lcs_channel *channel)
 	LCS_DBF_TEXT(4,trace,"clearch");
 	LCS_DBF_TEXT_(4, trace, "%s", dev_name(&channel->ccwdev->dev));
 	spin_lock_irqsave(get_ccwdev_lock(channel->ccwdev), flags);
-	rc = ccw_device_clear(channel->ccwdev, (addr_t) channel);
+	rc = ccw_device_clear(channel->ccwdev, 0);
 	spin_unlock_irqrestore(get_ccwdev_lock(channel->ccwdev), flags);
 	if (rc) {
 		LCS_DBF_TEXT_(4, trace, "ecsc%s",
@@ -532,7 +532,7 @@ lcs_stop_channel(struct lcs_channel *channel)
 	LCS_DBF_TEXT_(4, trace, "%s", dev_name(&channel->ccwdev->dev));
 	channel->state = LCS_CH_STATE_INIT;
 	spin_lock_irqsave(get_ccwdev_lock(channel->ccwdev), flags);
-	rc = ccw_device_halt(channel->ccwdev, (addr_t) channel);
+	rc = ccw_device_halt(channel->ccwdev, 0);
 	spin_unlock_irqrestore(get_ccwdev_lock(channel->ccwdev), flags);
 	if (rc) {
 		LCS_DBF_TEXT_(4, trace, "ehsc%s",
@@ -756,18 +756,14 @@ lcs_get_lancmd(struct lcs_card *card, int count)
 static void
 lcs_get_reply(struct lcs_reply *reply)
 {
-	WARN_ON(atomic_read(&reply->refcnt) <= 0);
-	atomic_inc(&reply->refcnt);
+	refcount_inc(&reply->refcnt);
 }
 
 static void
 lcs_put_reply(struct lcs_reply *reply)
 {
-        WARN_ON(atomic_read(&reply->refcnt) <= 0);
-        if (atomic_dec_and_test(&reply->refcnt)) {
+	if (refcount_dec_and_test(&reply->refcnt))
 		kfree(reply);
-	}
-
 }
 
 static struct lcs_reply *
@@ -780,7 +776,7 @@ lcs_alloc_reply(struct lcs_cmd *cmd)
 	reply = kzalloc(sizeof(struct lcs_reply), GFP_ATOMIC);
 	if (!reply)
 		return NULL;
-	atomic_set(&reply->refcnt,1);
+	refcount_set(&reply->refcnt, 1);
 	reply->sequence_no = cmd->sequence_no;
 	reply->received = 0;
 	reply->rc = 0;
@@ -1431,7 +1427,7 @@ lcs_irq(struct ccw_device *cdev, unsigned long intparm, struct irb *irb)
 		channel->state = LCS_CH_STATE_SUSPENDED;
 	if (irb->scsw.cmd.fctl & SCSW_FCTL_HALT_FUNC) {
 		if (irb->scsw.cmd.cc != 0) {
-			ccw_device_halt(channel->ccwdev, (addr_t) channel);
+			ccw_device_halt(channel->ccwdev, 0);
 			return;
 		}
 		/* The channel has been stopped by halt_IO. */
@@ -1932,6 +1928,8 @@ lcs_portno_store (struct device *dev, struct device_attribute *attr, const char 
 		return -EINVAL;
         /* TODO: sanity checks */
         card->portno = value;
+	if (card->dev)
+		card->dev->dev_port = card->portno;
 
         return count;
 
@@ -2162,6 +2160,7 @@ lcs_new_device(struct ccwgroup_device *ccwgdev)
 	card->dev = dev;
 	card->dev->ml_priv = card;
 	card->dev->netdev_ops = &lcs_netdev_ops;
+	card->dev->dev_port = card->portno;
 	memcpy(card->dev->dev_addr, card->mac, LCS_MAC_LENGTH);
 #ifdef CONFIG_IP_MULTICAST
 	if (!lcs_check_multicast_support(card))

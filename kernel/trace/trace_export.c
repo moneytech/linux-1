@@ -14,6 +14,13 @@
 
 #include "trace_output.h"
 
+/* Stub function for events with triggers */
+static int ftrace_event_register(struct trace_event_call *call,
+				 enum trace_reg type, void *data)
+{
+	return 0;
+}
+
 #undef TRACE_SYSTEM
 #define TRACE_SYSTEM	ftrace
 
@@ -117,7 +124,7 @@ static void __always_unused ____ftrace_check_##name(void)		\
 
 #undef __dynamic_array
 #define __dynamic_array(type, item)					\
-	ret = trace_define_field(event_call, #type, #item,		\
+	ret = trace_define_field(event_call, #type "[]", #item,  \
 				 offsetof(typeof(field), item),		\
 				 0, is_signed_type(type), filter_type);\
 	if (ret)							\
@@ -164,7 +171,7 @@ ftrace_define_fields_##name(struct trace_event_call *event_call)	\
 #define FTRACE_ENTRY_REG(call, struct_name, etype, tstruct, print, filter,\
 			 regfn)						\
 									\
-struct trace_event_class __refdata event_class_ftrace_##call = {	\
+static struct trace_event_class __refdata event_class_ftrace_##call = {	\
 	.system			= __stringify(TRACE_SYSTEM),		\
 	.define_fields		= ftrace_define_fields_##call,		\
 	.fields			= LIST_HEAD_INIT(event_class_ftrace_##call.fields),\
@@ -180,7 +187,7 @@ struct trace_event_call __used event_##call = {				\
 	.print_fmt		= print,				\
 	.flags			= TRACE_EVENT_FL_IGNORE_ENABLE,		\
 };									\
-struct trace_event_call __used						\
+static struct trace_event_call __used						\
 __attribute__((section("_ftrace_events"))) *__event_##call = &event_##call;
 
 #undef FTRACE_ENTRY

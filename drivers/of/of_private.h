@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-2.0+ */
 #ifndef _LINUX_OF_PRIVATE_H
 #define _LINUX_OF_PRIVATE_H
 /*
@@ -5,11 +6,6 @@
  *
  * Paul Mackerras	August 1996.
  * Copyright (C) 1996-2005 Paul Mackerras.
- *
- * This program is free software; you can redistribute it and/or
- * modify it under the terms of the GNU General Public License
- * as published by the Free Software Foundation; either version
- * 2 of the License, or (at your option) any later version.
  */
 
 /**
@@ -30,6 +26,14 @@ struct alias_prop {
 	int id;
 	char stem[0];
 };
+
+#if defined(CONFIG_SPARC)
+#define OF_ROOT_NODE_ADDR_CELLS_DEFAULT 2
+#else
+#define OF_ROOT_NODE_ADDR_CELLS_DEFAULT 1
+#endif
+
+#define OF_ROOT_NODE_SIZE_CELLS_DEFAULT 1
 
 extern struct mutex of_mutex;
 extern struct list_head aliases_lookup;
@@ -80,9 +84,15 @@ static inline void __of_detach_node_sysfs(struct device_node *np) {}
 int of_resolve_phandles(struct device_node *tree);
 #endif
 
+#if defined(CONFIG_OF_DYNAMIC)
+void __of_free_phandle_cache_entry(phandle handle);
+#endif
+
 #if defined(CONFIG_OF_OVERLAY)
 void of_overlay_mutex_lock(void);
 void of_overlay_mutex_unlock(void);
+int of_free_phandle_cache(void);
+void of_populate_phandle_cache(void);
 #else
 static inline void of_overlay_mutex_lock(void) {};
 static inline void of_overlay_mutex_unlock(void) {};
@@ -108,7 +118,8 @@ extern void *__unflatten_device_tree(const void *blob,
  * own the devtree lock or work on detached trees only.
  */
 struct property *__of_prop_dup(const struct property *prop, gfp_t allocflags);
-__printf(2, 3) struct device_node *__of_node_dup(const struct device_node *np, const char *fmt, ...);
+struct device_node *__of_node_dup(const struct device_node *np,
+				  const char *full_name);
 
 struct device_node *__of_find_node_by_path(struct device_node *parent,
 						const char *path);
@@ -135,6 +146,9 @@ extern void __of_detach_node_sysfs(struct device_node *np);
 extern void __of_sysfs_remove_bin_file(struct device_node *np,
 				       struct property *prop);
 
+/* illegal phandle value (set when unresolved) */
+#define OF_PHANDLE_ILLEGAL	0xdeadbeef
+
 /* iterators for transactions, used for overlays */
 /* forward iterator */
 #define for_each_transaction_entry(_oft, _te) \
@@ -143,5 +157,19 @@ extern void __of_sysfs_remove_bin_file(struct device_node *np,
 /* reverse iterator */
 #define for_each_transaction_entry_reverse(_oft, _te) \
 	list_for_each_entry_reverse(_te, &(_oft)->te_list, node)
+
+extern int of_bus_n_addr_cells(struct device_node *np);
+extern int of_bus_n_size_cells(struct device_node *np);
+
+#ifdef CONFIG_OF_ADDRESS
+extern int of_dma_get_range(struct device_node *np, u64 *dma_addr,
+			    u64 *paddr, u64 *size);
+#else
+static inline int of_dma_get_range(struct device_node *np, u64 *dma_addr,
+				   u64 *paddr, u64 *size)
+{
+	return -ENODEV;
+}
+#endif
 
 #endif /* _LINUX_OF_PRIVATE_H */

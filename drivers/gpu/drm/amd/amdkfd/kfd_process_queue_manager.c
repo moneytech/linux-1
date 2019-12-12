@@ -26,6 +26,7 @@
 #include "kfd_device_queue_manager.h"
 #include "kfd_priv.h"
 #include "kfd_kernel_queue.h"
+#include "amdgpu_amdkfd.h"
 
 static inline struct process_queue_node *get_queue_by_qid(
 			struct process_queue_manager *pqm, unsigned int qid)
@@ -52,7 +53,7 @@ static int find_available_queue_slot(struct process_queue_manager *pqm,
 	pr_debug("The new slot id %lu\n", found);
 
 	if (found >= KFD_MAX_NUM_OF_QUEUES_PER_PROCESS) {
-		pr_info("Cannot open more queues for process with pasid %d\n",
+		pr_info("Cannot open more queues for process with pasid 0x%x\n",
 				pqm->process->pasid);
 		return -ENOMEM;
 	}
@@ -72,6 +73,55 @@ void kfd_process_dequeue_from_device(struct kfd_process_device *pdd)
 
 	dev->dqm->ops.process_termination(dev->dqm, &pdd->qpd);
 	pdd->already_dequeued = true;
+}
+
+int pqm_set_gws(struct process_queue_manager *pqm, unsigned int qid,
+			void *gws)
+{
+	struct kfd_dev *dev = NULL;
+	struct process_queue_node *pqn;
+	struct kfd_process_device *pdd;
+	struct kgd_mem *mem = NULL;
+	int ret;
+
+	pqn = get_queue_by_qid(pqm, qid);
+	if (!pqn) {
+		pr_err("Queue id does not match any known queue\n");
+		return -EINVAL;
+	}
+
+	if (pqn->q)
+		dev = pqn->q->device;
+	if (WARN_ON(!dev))
+		return -ENODEV;
+
+	pdd = kfd_get_process_device_data(dev, pqm->process);
+	if (!pdd) {
+		pr_err("Process device data doesn't exist\n");
+		return -EINVAL;
+	}
+
+	/* Only allow one queue per process can have GWS assigned */
+	if (gws && pdd->qpd.num_gws)
+		return -EBUSY;
+
+	if (!gws && pdd->qpd.num_gws == 0)
+		return -EINVAL;
+
+	if (gws)
+		ret = amdgpu_amdkfd_add_gws_to_process(pdd->process->kgd_process_info,
+			gws, &mem);
+	else
+		ret = amdgpu_amdkfd_remove_gws_from_process(pdd->process->kgd_process_info,
+			pqn->q->gws);
+	if (unlikely(ret))
+		return ret;
+
+	pqn->q->gws = mem;
+	pdd->qpd.num_gws = gws ? amdgpu_amdkfd_get_num_gws(dev->kgd) : 0;
+
+	return pqn->q->device->dqm->ops.update_queue(pqn->q->device->dqm,
+							pqn->q);
 }
 
 void kfd_process_dequeue_from_all_devices(struct kfd_process *p)
@@ -100,6 +150,9 @@ void pqm_uninit(struct process_queue_manager *pqm)
 	struct process_queue_node *pqn, *next;
 
 	list_for_each_entry_safe(pqn, next, &pqm->queues, process_queue_list) {
+		if (pqn->q && pqn->q->gws)
+			amdgpu_amdkfd_remove_gws_from_process(pqm->process->kgd_process_info,
+				pqn->q->gws);
 		uninit_queue(pqn->q);
 		list_del(&pqn->process_queue_list);
 		kfree(pqn);
@@ -118,9 +171,6 @@ static int create_cp_queue(struct process_queue_manager *pqm,
 
 	/* Doorbell initialized in user space*/
 	q_properties->doorbell_ptr = NULL;
-
-	q_properties->doorbell_off =
-			kfd_queue_id_to_doorbell(dev, pqm->process, qid);
 
 	/* let DQM handle it*/
 	q_properties->vmid = 0;
@@ -178,10 +228,8 @@ int pqm_create_queue(struct process_queue_manager *pqm,
 		return retval;
 
 	if (list_empty(&pdd->qpd.queues_list) &&
-	    list_empty(&pdd->qpd.priv_queue_list)) {
-		pdd->qpd.pqm = pqm;
+	    list_empty(&pdd->qpd.priv_queue_list))
 		dev->dqm->ops.register_process(dev->dqm, &pdd->qpd);
-	}
 
 	pqn = kzalloc(sizeof(*pqn), GFP_KERNEL);
 	if (!pqn) {
@@ -191,9 +239,13 @@ int pqm_create_queue(struct process_queue_manager *pqm,
 
 	switch (type) {
 	case KFD_QUEUE_TYPE_SDMA:
-		if (dev->dqm->queue_count >=
-			CIK_SDMA_QUEUES_PER_ENGINE * CIK_SDMA_ENGINE_NUM) {
-			pr_err("Over-subscription is not allowed for SDMA.\n");
+	case KFD_QUEUE_TYPE_SDMA_XGMI:
+		if ((type == KFD_QUEUE_TYPE_SDMA && dev->dqm->sdma_queue_count
+			>= get_num_sdma_queues(dev->dqm)) ||
+			(type == KFD_QUEUE_TYPE_SDMA_XGMI &&
+			dev->dqm->xgmi_sdma_queue_count
+			>= get_num_xgmi_sdma_queues(dev->dqm))) {
+			pr_debug("Over-subscription is not allowed for SDMA.\n");
 			retval = -EPERM;
 			goto err_create_queue;
 		}
@@ -203,18 +255,18 @@ int pqm_create_queue(struct process_queue_manager *pqm,
 			goto err_create_queue;
 		pqn->q = q;
 		pqn->kq = NULL;
-		retval = dev->dqm->ops.create_queue(dev->dqm, q, &pdd->qpd,
-						&q->properties.vmid);
+		retval = dev->dqm->ops.create_queue(dev->dqm, q, &pdd->qpd);
 		pr_debug("DQM returned %d for create_queue\n", retval);
 		print_queue(q);
 		break;
 
 	case KFD_QUEUE_TYPE_COMPUTE:
 		/* check if there is over subscription */
-		if ((sched_policy == KFD_SCHED_POLICY_HWS_NO_OVERSUBSCRIPTION) &&
+		if ((dev->dqm->sched_policy ==
+		     KFD_SCHED_POLICY_HWS_NO_OVERSUBSCRIPTION) &&
 		((dev->dqm->processes_count >= dev->vm_info.vmid_num_kfd) ||
 		(dev->dqm->queue_count >= get_queues_num(dev->dqm)))) {
-			pr_err("Over-subscription is not allowed in radeon_kfd.sched_policy == 1\n");
+			pr_debug("Over-subscription is not allowed when amdkfd.sched_policy == 1\n");
 			retval = -EPERM;
 			goto err_create_queue;
 		}
@@ -224,8 +276,7 @@ int pqm_create_queue(struct process_queue_manager *pqm,
 			goto err_create_queue;
 		pqn->q = q;
 		pqn->kq = NULL;
-		retval = dev->dqm->ops.create_queue(dev->dqm, q, &pdd->qpd,
-						&q->properties.vmid);
+		retval = dev->dqm->ops.create_queue(dev->dqm, q, &pdd->qpd);
 		pr_debug("DQM returned %d for create_queue\n", retval);
 		print_queue(q);
 		break;
@@ -247,9 +298,19 @@ int pqm_create_queue(struct process_queue_manager *pqm,
 	}
 
 	if (retval != 0) {
-		pr_err("DQM create queue failed\n");
+		pr_err("Pasid 0x%x DQM create queue %d failed. ret %d\n",
+			pqm->process->pasid, type, retval);
 		goto err_create_queue;
 	}
+
+	if (q)
+		/* Return the doorbell offset within the doorbell page
+		 * to the caller so it can be passed up to user mode
+		 * (in bytes).
+		 */
+		properties->doorbell_off =
+			(q->properties.doorbell_off * sizeof(uint32_t)) &
+			(kfd_doorbell_process_slice(dev) - 1);
 
 	pr_debug("PQM After DQM create queue\n");
 
@@ -315,6 +376,22 @@ int pqm_destroy_queue(struct process_queue_manager *pqm, unsigned int qid)
 	if (pqn->q) {
 		dqm = pqn->q->device->dqm;
 		retval = dqm->ops.destroy_queue(dqm, &pdd->qpd, pqn->q);
+		if (retval) {
+			pr_err("Pasid 0x%x destroy queue %d failed, ret %d\n",
+				pqm->process->pasid,
+				pqn->q->properties.queue_id, retval);
+			if (retval != -ETIME)
+				goto err_destroy_queue;
+		}
+
+		if (pqn->q->gws) {
+			amdgpu_amdkfd_remove_gws_from_process(pqm->process->kgd_process_info,
+				pqn->q->gws);
+			pdd->qpd.num_gws = 0;
+		}
+
+		kfree(pqn->q->properties.cu_mask);
+		pqn->q->properties.cu_mask = NULL;
 		uninit_queue(pqn->q);
 	}
 
@@ -326,6 +403,7 @@ int pqm_destroy_queue(struct process_queue_manager *pqm, unsigned int qid)
 	    list_empty(&pdd->qpd.priv_queue_list))
 		dqm->ops.unregister_process(dqm, &pdd->qpd);
 
+err_destroy_queue:
 	return retval;
 }
 
@@ -354,6 +432,34 @@ int pqm_update_queue(struct process_queue_manager *pqm, unsigned int qid,
 	return 0;
 }
 
+int pqm_set_cu_mask(struct process_queue_manager *pqm, unsigned int qid,
+			struct queue_properties *p)
+{
+	int retval;
+	struct process_queue_node *pqn;
+
+	pqn = get_queue_by_qid(pqm, qid);
+	if (!pqn) {
+		pr_debug("No queue %d exists for update operation\n", qid);
+		return -EFAULT;
+	}
+
+	/* Free the old CU mask memory if it is already allocated, then
+	 * allocate memory for the new CU mask.
+	 */
+	kfree(pqn->q->properties.cu_mask);
+
+	pqn->q->properties.cu_mask_count = p->cu_mask_count;
+	pqn->q->properties.cu_mask = p->cu_mask;
+
+	retval = pqn->q->device->dqm->ops.update_queue(pqn->q->device->dqm,
+							pqn->q);
+	if (retval != 0)
+		return retval;
+
+	return 0;
+}
+
 struct kernel_queue *pqm_get_kernel_queue(
 					struct process_queue_manager *pqm,
 					unsigned int qid)
@@ -367,4 +473,88 @@ struct kernel_queue *pqm_get_kernel_queue(
 	return NULL;
 }
 
+int pqm_get_wave_state(struct process_queue_manager *pqm,
+		       unsigned int qid,
+		       void __user *ctl_stack,
+		       u32 *ctl_stack_used_size,
+		       u32 *save_area_used_size)
+{
+	struct process_queue_node *pqn;
 
+	pqn = get_queue_by_qid(pqm, qid);
+	if (!pqn) {
+		pr_debug("amdkfd: No queue %d exists for operation\n",
+			 qid);
+		return -EFAULT;
+	}
+
+	return pqn->q->device->dqm->ops.get_wave_state(pqn->q->device->dqm,
+						       pqn->q,
+						       ctl_stack,
+						       ctl_stack_used_size,
+						       save_area_used_size);
+}
+
+#if defined(CONFIG_DEBUG_FS)
+
+int pqm_debugfs_mqds(struct seq_file *m, void *data)
+{
+	struct process_queue_manager *pqm = data;
+	struct process_queue_node *pqn;
+	struct queue *q;
+	enum KFD_MQD_TYPE mqd_type;
+	struct mqd_manager *mqd_mgr;
+	int r = 0;
+
+	list_for_each_entry(pqn, &pqm->queues, process_queue_list) {
+		if (pqn->q) {
+			q = pqn->q;
+			switch (q->properties.type) {
+			case KFD_QUEUE_TYPE_SDMA:
+			case KFD_QUEUE_TYPE_SDMA_XGMI:
+				seq_printf(m, "  SDMA queue on device %x\n",
+					   q->device->id);
+				mqd_type = KFD_MQD_TYPE_SDMA;
+				break;
+			case KFD_QUEUE_TYPE_COMPUTE:
+				seq_printf(m, "  Compute queue on device %x\n",
+					   q->device->id);
+				mqd_type = KFD_MQD_TYPE_CP;
+				break;
+			default:
+				seq_printf(m,
+				"  Bad user queue type %d on device %x\n",
+					   q->properties.type, q->device->id);
+				continue;
+			}
+			mqd_mgr = q->device->dqm->mqd_mgrs[mqd_type];
+		} else if (pqn->kq) {
+			q = pqn->kq->queue;
+			mqd_mgr = pqn->kq->mqd_mgr;
+			switch (q->properties.type) {
+			case KFD_QUEUE_TYPE_DIQ:
+				seq_printf(m, "  DIQ on device %x\n",
+					   pqn->kq->dev->id);
+				break;
+			default:
+				seq_printf(m,
+				"  Bad kernel queue type %d on device %x\n",
+					   q->properties.type,
+					   pqn->kq->dev->id);
+				continue;
+			}
+		} else {
+			seq_printf(m,
+		"  Weird: Queue node with neither kernel nor user queue\n");
+			continue;
+		}
+
+		r = mqd_mgr->debugfs_show_mqd(m, q->mqd);
+		if (r != 0)
+			break;
+	}
+
+	return r;
+}
+
+#endif

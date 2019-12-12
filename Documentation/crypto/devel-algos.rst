@@ -128,25 +128,20 @@ process requests that are unaligned. This implies, however, additional
 overhead as the kernel crypto API needs to perform the realignment of
 the data which may imply moving of data.
 
-Cipher Definition With struct blkcipher_alg and ablkcipher_alg
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Cipher Definition With struct skcipher_alg
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-Struct blkcipher_alg defines a synchronous block cipher whereas struct
-ablkcipher_alg defines an asynchronous block cipher.
+Struct skcipher_alg defines a multi-block cipher, or more generally, a
+length-preserving symmetric cipher algorithm.
 
-Please refer to the single block cipher description for schematics of
-the block cipher usage.
+Scatterlist handling
+~~~~~~~~~~~~~~~~~~~~
 
-Specifics Of Asynchronous Multi-Block Cipher
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-
-There are a couple of specifics to the asynchronous interface.
-
-First of all, some of the drivers will want to use the Generic
-ScatterWalk in case the hardware needs to be fed separate chunks of the
-scatterlist which contains the plaintext and will contain the
-ciphertext. Please refer to the ScatterWalk interface offered by the
-Linux kernel scatter / gather list implementation.
+Some drivers will want to use the Generic ScatterWalk in case the
+hardware needs to be fed separate chunks of the scatterlist which
+contains the plaintext and will contain the ciphertext. Please refer
+to the ScatterWalk interface offered by the Linux kernel scatter /
+gather list implementation.
 
 Hashing [HASH]
 --------------
@@ -235,6 +230,14 @@ when used from another part of the kernel.
                  .import -> .finup()
                                |
                                '---------------> HASH2
+
+Note that it is perfectly legal to "abandon" a request object:
+- call .init() and then (as many times) .update()
+- _not_ call any of .final(), .finup() or .export() at any point in future
+
+In other words implementations should mind the resource allocation and clean-up.
+No resources related to request objects should remain allocated after a call
+to .init() or .update(), since there might be no chance to free them.
 
 
 Specifics Of Asynchronous HASH Transformation

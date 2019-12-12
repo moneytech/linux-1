@@ -14,13 +14,15 @@
  * Joe Taylor <joe@tensilica.com, joetylr@yahoo.com>
  */
 
+#define RO_EXCEPTION_TABLE_ALIGN	16
+
 #include <asm-generic/vmlinux.lds.h>
 #include <asm/page.h>
 #include <asm/thread_info.h>
 
+#include <asm/core.h>
 #include <asm/vectors.h>
-#include <variant/core.h>
-#include <platform/hardware.h>
+
 OUTPUT_ARCH(xtensa)
 ENTRY(_start)
 
@@ -45,24 +47,16 @@ jiffies = jiffies_64;
 	LONG(sym ## _end);			\
 	LONG(LOADADDR(section))
 
-/* Macro to define a section for a vector.
- *
- * Use of the MIN function catches the types of errors illustrated in
- * the following example:
- *
- * Assume the section .DoubleExceptionVector.literal is completely
- * full.  Then a programmer adds code to .DoubleExceptionVector.text
- * that produces another literal.  The final literal position will
- * overlay onto the first word of the adjacent code section
- * .DoubleExceptionVector.text.  (In practice, the literals will
- * overwrite the code, and the first few instructions will be
- * garbage.)
+/*
+ * Macro to define a section for a vector. When CONFIG_VECTORS_OFFSET is
+ * defined code for every vector is located with other init data. At startup
+ * time head.S copies code for every vector to its final position according
+ * to description recorded in the corresponding RELOCATE_ENTRY.
  */
 
 #ifdef CONFIG_VECTORS_OFFSET
-#define SECTION_VECTOR(sym, section, addr, max_prevsec_size, prevsec)       \
-  section addr : AT((MIN(LOADADDR(prevsec) + max_prevsec_size,		    \
-		         LOADADDR(prevsec) + SIZEOF(prevsec)) + 3) & ~ 3)   \
+#define SECTION_VECTOR(sym, section, addr, prevsec)                         \
+  section addr : AT(((LOADADDR(prevsec) + SIZEOF(prevsec)) + 3) & ~ 3)      \
   {									    \
     . = ALIGN(4);							    \
     sym ## _start = ABSOLUTE(.);		 			    \
@@ -112,44 +106,35 @@ SECTIONS
 #if XCHAL_EXCM_LEVEL >= 6
   SECTION_VECTOR (.Level6InterruptVector.text, INTLEVEL6_VECTOR_VADDR)
 #endif
-  SECTION_VECTOR (.DebugInterruptVector.literal, DEBUG_VECTOR_VADDR - 4)
   SECTION_VECTOR (.DebugInterruptVector.text, DEBUG_VECTOR_VADDR)
-  SECTION_VECTOR (.KernelExceptionVector.literal, KERNEL_VECTOR_VADDR - 4)
   SECTION_VECTOR (.KernelExceptionVector.text, KERNEL_VECTOR_VADDR)
-  SECTION_VECTOR (.UserExceptionVector.literal, USER_VECTOR_VADDR - 4)
   SECTION_VECTOR (.UserExceptionVector.text, USER_VECTOR_VADDR)
-  SECTION_VECTOR (.DoubleExceptionVector.literal, DOUBLEEXC_VECTOR_VADDR - 20)
   SECTION_VECTOR (.DoubleExceptionVector.text, DOUBLEEXC_VECTOR_VADDR)
 #endif
 
+    IRQENTRY_TEXT
+    SOFTIRQENTRY_TEXT
+    ENTRY_TEXT
     TEXT_TEXT
-    VMLINUX_SYMBOL(__sched_text_start) = .;
-    *(.sched.literal .sched.text)
-    VMLINUX_SYMBOL(__sched_text_end) = .;
-    VMLINUX_SYMBOL(__cpuidle_text_start) = .;
-    *(.cpuidle.literal .cpuidle.text)
-    VMLINUX_SYMBOL(__cpuidle_text_end) = .;
-    VMLINUX_SYMBOL(__lock_text_start) = .;
-    *(.spinlock.literal .spinlock.text)
-    VMLINUX_SYMBOL(__lock_text_end) = .;
-
+    SCHED_TEXT
+    CPUIDLE_TEXT
+    LOCK_TEXT
+    *(.fixup)
   }
   _etext = .;
   PROVIDE (etext = .);
 
   . = ALIGN(16);
 
-  RODATA
+  RO_DATA(4096)
 
-  /*  Relocation table */
-
-  .fixup   : { *(.fixup) }
-
-  EXCEPTION_TABLE(16)
   /* Data section */
 
+#ifdef CONFIG_XIP_KERNEL
+  INIT_TEXT_SECTION(PAGE_SIZE)
+#else
   _sdata = .;
-  RW_DATA_SECTION(XCHAL_ICACHE_LINESIZE, PAGE_SIZE, THREAD_SIZE)
+  RW_DATA(XCHAL_ICACHE_LINESIZE, PAGE_SIZE, THREAD_SIZE)
   _edata = .;
 
   /* Initialization code and data: */
@@ -161,6 +146,11 @@ SECTIONS
   .init.data :
   {
     INIT_DATA
+  }
+#endif
+
+  .init.rodata :
+  {
     . = ALIGN(0x4);
     __tagtable_begin = .;
     *(.taglist)
@@ -196,25 +186,26 @@ SECTIONS
 		   .KernelExceptionVector.text);
     RELOCATE_ENTRY(_UserExceptionVector_text,
 		   .UserExceptionVector.text);
-    RELOCATE_ENTRY(_DoubleExceptionVector_literal,
-		   .DoubleExceptionVector.literal);
     RELOCATE_ENTRY(_DoubleExceptionVector_text,
 		   .DoubleExceptionVector.text);
     RELOCATE_ENTRY(_DebugInterruptVector_text,
 		   .DebugInterruptVector.text);
 #endif
+#ifdef CONFIG_XIP_KERNEL
+    RELOCATE_ENTRY(_xip_data, .data);
+    RELOCATE_ENTRY(_xip_init_data, .init.data);
+#else
 #if defined(CONFIG_SMP)
     RELOCATE_ENTRY(_SecondaryResetVector_text,
 		   .SecondaryResetVector.text);
 #endif
+#endif
 
-  
     __boot_reloc_table_end = ABSOLUTE(.) ;
 
     INIT_SETUP(XCHAL_ICACHE_LINESIZE)
     INIT_CALLS
     CON_INITCALL
-    SECURITY_INITCALL
     INIT_RAM_FS
   }
 
@@ -230,25 +221,19 @@ SECTIONS
 
   SECTION_VECTOR (_WindowVectors_text,
 		  .WindowVectors.text,
-		  WINDOW_VECTORS_VADDR, 4,
+		  WINDOW_VECTORS_VADDR,
 		  .dummy)
-  SECTION_VECTOR (_DebugInterruptVector_literal,
-		  .DebugInterruptVector.literal,
-		  DEBUG_VECTOR_VADDR - 4,
-		  SIZEOF(.WindowVectors.text),
-		  .WindowVectors.text)
   SECTION_VECTOR (_DebugInterruptVector_text,
 		  .DebugInterruptVector.text,
 		  DEBUG_VECTOR_VADDR,
-		  4,
-		  .DebugInterruptVector.literal)
+		  .WindowVectors.text)
 #undef LAST
 #define LAST	.DebugInterruptVector.text
 #if XCHAL_EXCM_LEVEL >= 2
   SECTION_VECTOR (_Level2InterruptVector_text,
 		  .Level2InterruptVector.text,
 		  INTLEVEL2_VECTOR_VADDR,
-		  SIZEOF(LAST), LAST)
+		  LAST)
 # undef LAST
 # define LAST	.Level2InterruptVector.text
 #endif
@@ -256,7 +241,7 @@ SECTIONS
   SECTION_VECTOR (_Level3InterruptVector_text,
 		  .Level3InterruptVector.text,
 		  INTLEVEL3_VECTOR_VADDR,
-		  SIZEOF(LAST), LAST)
+		  LAST)
 # undef LAST
 # define LAST	.Level3InterruptVector.text
 #endif
@@ -264,7 +249,7 @@ SECTIONS
   SECTION_VECTOR (_Level4InterruptVector_text,
 		  .Level4InterruptVector.text,
 		  INTLEVEL4_VECTOR_VADDR,
-		  SIZEOF(LAST), LAST)
+		  LAST)
 # undef LAST
 # define LAST	.Level4InterruptVector.text
 #endif
@@ -272,7 +257,7 @@ SECTIONS
   SECTION_VECTOR (_Level5InterruptVector_text,
 		  .Level5InterruptVector.text,
 		  INTLEVEL5_VECTOR_VADDR,
-		  SIZEOF(LAST), LAST)
+		  LAST)
 # undef LAST
 # define LAST	.Level5InterruptVector.text
 #endif
@@ -280,50 +265,32 @@ SECTIONS
   SECTION_VECTOR (_Level6InterruptVector_text,
 		  .Level6InterruptVector.text,
 		  INTLEVEL6_VECTOR_VADDR,
-		  SIZEOF(LAST), LAST)
+		  LAST)
 # undef LAST
 # define LAST	.Level6InterruptVector.text
 #endif
-  SECTION_VECTOR (_KernelExceptionVector_literal,
-		  .KernelExceptionVector.literal,
-		  KERNEL_VECTOR_VADDR - 4,
-		  SIZEOF(LAST), LAST)
-#undef LAST
   SECTION_VECTOR (_KernelExceptionVector_text,
 		  .KernelExceptionVector.text,
 		  KERNEL_VECTOR_VADDR,
-		  4,
-		  .KernelExceptionVector.literal)
-  SECTION_VECTOR (_UserExceptionVector_literal,
-		  .UserExceptionVector.literal,
-		  USER_VECTOR_VADDR - 4,
-		  SIZEOF(.KernelExceptionVector.text),
-		  .KernelExceptionVector.text)
+		  LAST)
+#undef LAST
   SECTION_VECTOR (_UserExceptionVector_text,
 		  .UserExceptionVector.text,
 		  USER_VECTOR_VADDR,
-		  4,
-		  .UserExceptionVector.literal)
-  SECTION_VECTOR (_DoubleExceptionVector_literal,
-		  .DoubleExceptionVector.literal,
-		  DOUBLEEXC_VECTOR_VADDR - 20,
-		  SIZEOF(.UserExceptionVector.text),
-		  .UserExceptionVector.text)
+		  .KernelExceptionVector.text)
   SECTION_VECTOR (_DoubleExceptionVector_text,
 		  .DoubleExceptionVector.text,
 		  DOUBLEEXC_VECTOR_VADDR,
-		  20,
-		  .DoubleExceptionVector.literal)
+		  .UserExceptionVector.text)
 
   . = (LOADADDR( .DoubleExceptionVector.text ) + SIZEOF( .DoubleExceptionVector.text ) + 3) & ~ 3;
 
 #endif
-#if defined(CONFIG_SMP)
+#if !defined(CONFIG_XIP_KERNEL) && defined(CONFIG_SMP)
 
   SECTION_VECTOR (_SecondaryResetVector_text,
 		  .SecondaryResetVector.text,
 		  RESET_VECTOR1_VADDR,
-		  SIZEOF(.DoubleExceptionVector.text),
 		  .DoubleExceptionVector.text)
 
   . = LOADADDR(.SecondaryResetVector.text)+SIZEOF(.SecondaryResetVector.text);
@@ -332,46 +299,54 @@ SECTIONS
 
   . = ALIGN(PAGE_SIZE);
 
+#ifndef CONFIG_XIP_KERNEL
   __init_end = .;
 
   BSS_SECTION(0, 8192, 0)
+#endif
 
   _end = .;
 
-  .xt.lit : { *(.xt.lit) }
-  .xt.prop : { *(.xt.prop) }
+#ifdef CONFIG_XIP_KERNEL
+  . = CONFIG_XIP_DATA_ADDR;
 
-  .debug  0 :  { *(.debug) }
-  .line  0 :  { *(.line) }
-  .debug_srcinfo  0 :  { *(.debug_srcinfo) }
-  .debug_sfnames  0 :  { *(.debug_sfnames) }
-  .debug_aranges  0 :  { *(.debug_aranges) }
-  .debug_pubnames  0 :  { *(.debug_pubnames) }
-  .debug_info  0 :  { *(.debug_info) }
-  .debug_abbrev  0 :  { *(.debug_abbrev) }
-  .debug_line  0 :  { *(.debug_line) }
-  .debug_frame  0 :  { *(.debug_frame) }
-  .debug_str  0 :  { *(.debug_str) }
-  .debug_loc  0 :  { *(.debug_loc) }
-  .debug_macinfo  0 :  { *(.debug_macinfo) }
-  .debug_weaknames  0 :  { *(.debug_weaknames) }
-  .debug_funcnames  0 :  { *(.debug_funcnames) }
-  .debug_typenames  0 :  { *(.debug_typenames) }
-  .debug_varnames  0 :  { *(.debug_varnames) }
+  _xip_start = .;
 
-  .xt.insn 0 :
+#undef LOAD_OFFSET
+#define LOAD_OFFSET \
+  (CONFIG_XIP_DATA_ADDR - (LOADADDR(.dummy) + SIZEOF(.dummy) + 3) & ~ 3)
+
+  _xip_data_start = .;
+  _sdata = .;
+  RW_DATA(XCHAL_ICACHE_LINESIZE, PAGE_SIZE, THREAD_SIZE)
+  _edata = .;
+  _xip_data_end = .;
+
+  /* Initialization data: */
+
+  STRUCT_ALIGN();
+
+  _xip_init_data_start = .;
+  __init_begin = .;
+  .init.data :
   {
-    *(.xt.insn)
-    *(.gnu.linkonce.x*)
+    INIT_DATA
   }
+  _xip_init_data_end = .;
+  __init_end = .;
+  BSS_SECTION(0, 8192, 0)
 
-  .xt.lit 0 :
-  {
-    *(.xt.lit)
-    *(.gnu.linkonce.p*)
-  }
+  _xip_end = .;
+
+#undef LOAD_OFFSET
+#endif
+
+  DWARF_DEBUG
+
+  .xt.prop 0 : { KEEP(*(.xt.prop .xt.prop.* .gnu.linkonce.prop.*)) }
+  .xt.insn 0 : { KEEP(*(.xt.insn .xt.insn.* .gnu.linkonce.x*)) }
+  .xt.lit  0 : { KEEP(*(.xt.lit  .xt.lit.*  .gnu.linkonce.p*)) }
 
   /* Sections to be discarded */
   DISCARDS
-  /DISCARD/ : { *(.exit.literal) }
 }

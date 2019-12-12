@@ -1,10 +1,7 @@
+// SPDX-License-Identifier: GPL-2.0
 /*
  * Copyright (C) 2013 TangoTec Ltd.
  * Author: Baruch Siach <baruch@tkos.co.il>
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License version 2 as
- * published by the Free Software Foundation.
  *
  * Driver for the Xtensa LX4 GPIO32 Option
  *
@@ -30,7 +27,7 @@
 
 #include <linux/err.h>
 #include <linux/module.h>
-#include <linux/gpio.h>
+#include <linux/gpio/driver.h>
 #include <linux/bitops.h>
 #include <linux/platform_device.h>
 
@@ -75,7 +72,7 @@ static inline void disable_cp(unsigned long flags, unsigned long cpenable)
 
 static int xtensa_impwire_get_direction(struct gpio_chip *gc, unsigned offset)
 {
-	return 1; /* input only */
+	return GPIO_LINE_DIRECTION_IN; /* input only */
 }
 
 static int xtensa_impwire_get_value(struct gpio_chip *gc, unsigned offset)
@@ -98,7 +95,7 @@ static void xtensa_impwire_set_value(struct gpio_chip *gc, unsigned offset,
 
 static int xtensa_expstate_get_direction(struct gpio_chip *gc, unsigned offset)
 {
-	return 0; /* output only */
+	return GPIO_LINE_DIRECTION_OUT; /* output only */
 }
 
 static int xtensa_expstate_get_value(struct gpio_chip *gc, unsigned offset)

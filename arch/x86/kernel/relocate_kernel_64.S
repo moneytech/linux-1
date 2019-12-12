@@ -1,9 +1,7 @@
+/* SPDX-License-Identifier: GPL-2.0-only */
 /*
  * relocate_kernel.S - put the kernel image in place to boot
  * Copyright (C) 2002-2005 Eric Biederman  <ebiederm@xmission.com>
- *
- * This source code is licensed under the GNU General Public License,
- * Version 2.  See the file COPYING for more details.
  */
 
 #include <linux/linkage.h>
@@ -40,8 +38,7 @@
 	.text
 	.align PAGE_SIZE
 	.code64
-	.globl relocate_kernel
-relocate_kernel:
+SYM_CODE_START_NOALIGN(relocate_kernel)
 	/*
 	 * %rdi indirection_page
 	 * %rsi page_list
@@ -67,6 +64,9 @@ relocate_kernel:
 	movq	%rax, CR3(%r11)
 	movq	%cr4, %rax
 	movq	%rax, CR4(%r11)
+
+	/* Save CR4. Required to enable the right paging mode later. */
+	movq	%rax, %r13
 
 	/* zero out flags, and disable interrupts */
 	pushq $0
@@ -102,8 +102,9 @@ relocate_kernel:
 	addq	$(identity_mapped - relocate_kernel), %r8
 	pushq	%r8
 	ret
+SYM_CODE_END(relocate_kernel)
 
-identity_mapped:
+SYM_CODE_START_LOCAL_NOALIGN(identity_mapped)
 	/* set return address to 0 if not preserving context */
 	pushq	$0
 	/* store the start address on the stack */
@@ -126,8 +127,13 @@ identity_mapped:
 	/*
 	 * Set cr4 to a known state:
 	 *  - physical address extension enabled
+	 *  - 5-level paging, if it was enabled before
 	 */
 	movl	$X86_CR4_PAE, %eax
+	testq	$X86_CR4_LA57, %r13
+	jz	1f
+	orl	$X86_CR4_LA57, %eax
+1:
 	movq	%rax, %cr4
 
 	jmp 1f
@@ -203,8 +209,9 @@ identity_mapped:
 	movq	$virtual_mapped, %rax
 	pushq	%rax
 	ret
+SYM_CODE_END(identity_mapped)
 
-virtual_mapped:
+SYM_CODE_START_LOCAL_NOALIGN(virtual_mapped)
 	movq	RSP(%r8), %rsp
 	movq	CR4(%r8), %rax
 	movq	%rax, %cr4
@@ -222,9 +229,10 @@ virtual_mapped:
 	popq	%rbp
 	popq	%rbx
 	ret
+SYM_CODE_END(virtual_mapped)
 
 	/* Do the copies */
-swap_pages:
+SYM_CODE_START_LOCAL_NOALIGN(swap_pages)
 	movq	%rdi, %rcx 	/* Put the page_list in %rcx */
 	xorl	%edi, %edi
 	xorl	%esi, %esi
@@ -277,6 +285,7 @@ swap_pages:
 	jmp	0b
 3:
 	ret
+SYM_CODE_END(swap_pages)
 
 	.globl kexec_control_code_size
 .set kexec_control_code_size, . - relocate_kernel

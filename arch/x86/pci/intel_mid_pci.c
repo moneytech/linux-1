@@ -300,6 +300,7 @@ int __init intel_mid_pci_init(void)
 	pci_root_ops = intel_mid_pci_ops;
 	pci_soc_mode = 1;
 	/* Continue with standard init */
+	acpi_noirq_set();
 	return 1;
 }
 
@@ -381,7 +382,7 @@ static void pci_fixed_bar_fixup(struct pci_dev *dev)
 	    PCI_DEVFN(2, 2) == dev->devfn)
 		return;
 
-	for (i = 0; i < PCI_ROM_RESOURCE; i++) {
+	for (i = 0; i < PCI_STD_NUM_BARS; i++) {
 		pci_read_config_dword(dev, offset + 8 + (i * 4), &size);
 		dev->resource[i].end = dev->resource[i].start + size - 1;
 		dev->resource[i].flags |= IORESOURCE_PCI_FIXED;

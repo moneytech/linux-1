@@ -589,6 +589,17 @@ static void pci_fixup_amd_ehci_pme(struct pci_dev *dev)
 DECLARE_PCI_FIXUP_FINAL(PCI_VENDOR_ID_AMD, 0x7808, pci_fixup_amd_ehci_pme);
 
 /*
+ * Device [1022:7914]
+ * When in D0, PME# doesn't get asserted when plugging USB 2.0 device.
+ */
+static void pci_fixup_amd_fch_xhci_pme(struct pci_dev *dev)
+{
+	dev_info(&dev->dev, "PME# does not work under D0, disabling it\n");
+	dev->pme_support &= ~(PCI_PM_CAP_PME_D0 >> PCI_PM_CAP_PME_SHIFT);
+}
+DECLARE_PCI_FIXUP_FINAL(PCI_VENDOR_ID_AMD, 0x7914, pci_fixup_amd_fch_xhci_pme);
+
+/*
  * Apple MacBook Pro: Avoid [mem 0x7fa00000-0x7fbfffff]
  *
  * Using the [mem 0x7fa00000-0x7fbfffff] region, e.g., by assigning it to
@@ -629,13 +640,27 @@ DECLARE_PCI_FIXUP_HEADER(PCI_VENDOR_ID_INTEL, 0x8c10, quirk_apple_mbp_poweroff);
 static void quirk_no_aersid(struct pci_dev *pdev)
 {
 	/* VMD Domain */
-	if (is_vmd(pdev->bus))
+	if (is_vmd(pdev->bus) && pci_is_root_bus(pdev->bus))
 		pdev->bus->bus_flags |= PCI_BUS_FLAGS_NO_AERSID;
 }
-DECLARE_PCI_FIXUP_EARLY(PCI_VENDOR_ID_INTEL, 0x2030, quirk_no_aersid);
-DECLARE_PCI_FIXUP_EARLY(PCI_VENDOR_ID_INTEL, 0x2031, quirk_no_aersid);
-DECLARE_PCI_FIXUP_EARLY(PCI_VENDOR_ID_INTEL, 0x2032, quirk_no_aersid);
-DECLARE_PCI_FIXUP_EARLY(PCI_VENDOR_ID_INTEL, 0x2033, quirk_no_aersid);
+DECLARE_PCI_FIXUP_CLASS_EARLY(PCI_VENDOR_ID_INTEL, PCI_ANY_ID,
+			      PCI_CLASS_BRIDGE_PCI, 8, quirk_no_aersid);
+
+static void quirk_intel_th_dnv(struct pci_dev *dev)
+{
+	struct resource *r = &dev->resource[4];
+
+	/*
+	 * Denverton reports 2k of RTIT_BAR (intel_th resource 4), which
+	 * appears to be 4 MB in reality.
+	 */
+	if (r->end == r->start + 0x7ff) {
+		r->start = 0;
+		r->end   = 0x3fffff;
+		r->flags |= IORESOURCE_UNSET;
+	}
+}
+DECLARE_PCI_FIXUP_HEADER(PCI_VENDOR_ID_INTEL, 0x19e1, quirk_intel_th_dnv);
 
 #ifdef CONFIG_PHYS_ADDR_T_64BIT
 
@@ -662,10 +687,14 @@ DECLARE_PCI_FIXUP_EARLY(PCI_VENDOR_ID_INTEL, 0x2033, quirk_no_aersid);
  */
 static void pci_amd_enable_64bit_bar(struct pci_dev *dev)
 {
-	unsigned i;
-	u32 base, limit, high;
+	static const char *name = "PCI Bus 0000:00";
 	struct resource *res, *conflict;
+	u32 base, limit, high;
 	struct pci_dev *other;
+	unsigned i;
+
+	if (!(pci_probe & PCI_BIG_ROOT_WINDOW))
+		return;
 
 	/* Check that we are the only device of that type */
 	other = pci_get_device(dev->vendor, dev->device, NULL);
@@ -699,22 +728,30 @@ static void pci_amd_enable_64bit_bar(struct pci_dev *dev)
 	if (!res)
 		return;
 
-	res->name = "PCI Bus 0000:00";
+	/*
+	 * Allocate a 256GB window directly below the 0xfd00000000 hardware
+	 * limit (see AMD Family 15h Models 30h-3Fh BKDG, sec 2.4.6).
+	 */
+	res->name = name;
 	res->flags = IORESOURCE_PREFETCH | IORESOURCE_MEM |
 		IORESOURCE_MEM_64 | IORESOURCE_WINDOW;
-	res->start = 0x100000000ull;
+	res->start = 0xbd00000000ull;
 	res->end = 0xfd00000000ull - 1;
 
-	/* Just grab the free area behind system memory for this */
-	while ((conflict = request_resource_conflict(&iomem_resource, res))) {
-		if (conflict->end >= res->end) {
-			kfree(res);
+	conflict = request_resource_conflict(&iomem_resource, res);
+	if (conflict) {
+		kfree(res);
+		if (conflict->name != name)
 			return;
-		}
-		res->start = conflict->end + 1;
-	}
 
-	dev_info(&dev->dev, "adding root bus resource %pR\n", res);
+		/* We are resuming from suspend; just reenable the window */
+		res = conflict;
+	} else {
+		dev_info(&dev->dev, "adding root bus resource %pR (tainting kernel)\n",
+			 res);
+		add_taint(TAINT_FIRMWARE_WORKAROUND, LOCKDEP_STILL_OK);
+		pci_bus_add_resource(dev->bus, res, 0);
+	}
 
 	base = ((res->start >> 8) & AMD_141b_MMIO_BASE_MMIOBASE_MASK) |
 		AMD_141b_MMIO_BASE_RE_MASK | AMD_141b_MMIO_BASE_WE_MASK;
@@ -726,13 +763,16 @@ static void pci_amd_enable_64bit_bar(struct pci_dev *dev)
 	pci_write_config_dword(dev, AMD_141b_MMIO_HIGH(i), high);
 	pci_write_config_dword(dev, AMD_141b_MMIO_LIMIT(i), limit);
 	pci_write_config_dword(dev, AMD_141b_MMIO_BASE(i), base);
-
-	pci_bus_add_resource(dev->bus, res, 0);
 }
 DECLARE_PCI_FIXUP_FINAL(PCI_VENDOR_ID_AMD, 0x1401, pci_amd_enable_64bit_bar);
 DECLARE_PCI_FIXUP_FINAL(PCI_VENDOR_ID_AMD, 0x141b, pci_amd_enable_64bit_bar);
 DECLARE_PCI_FIXUP_FINAL(PCI_VENDOR_ID_AMD, 0x1571, pci_amd_enable_64bit_bar);
 DECLARE_PCI_FIXUP_FINAL(PCI_VENDOR_ID_AMD, 0x15b1, pci_amd_enable_64bit_bar);
 DECLARE_PCI_FIXUP_FINAL(PCI_VENDOR_ID_AMD, 0x1601, pci_amd_enable_64bit_bar);
+DECLARE_PCI_FIXUP_RESUME(PCI_VENDOR_ID_AMD, 0x1401, pci_amd_enable_64bit_bar);
+DECLARE_PCI_FIXUP_RESUME(PCI_VENDOR_ID_AMD, 0x141b, pci_amd_enable_64bit_bar);
+DECLARE_PCI_FIXUP_RESUME(PCI_VENDOR_ID_AMD, 0x1571, pci_amd_enable_64bit_bar);
+DECLARE_PCI_FIXUP_RESUME(PCI_VENDOR_ID_AMD, 0x15b1, pci_amd_enable_64bit_bar);
+DECLARE_PCI_FIXUP_RESUME(PCI_VENDOR_ID_AMD, 0x1601, pci_amd_enable_64bit_bar);
 
 #endif

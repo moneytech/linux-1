@@ -1,11 +1,8 @@
+/* SPDX-License-Identifier: GPL-2.0-only */
 /****************************************************************************
  * Driver for Solarflare network controllers and boards
  * Copyright 2005-2006 Fen Systems Ltd.
  * Copyright 2006-2013 Solarflare Communications Inc.
- *
- * This program is free software; you can redistribute it and/or modify it
- * under the terms of the GNU General Public License version 2 as published
- * by the Free Software Foundation, incorporated herein by reference.
  */
 
 #ifndef EFX_EFX_H
@@ -13,11 +10,6 @@
 
 #include "net_driver.h"
 #include "filter.h"
-
-/* All controllers use BAR 0 for I/O space and BAR 2(&3) for memory */
-/* All VFs use BAR 0/1 for memory */
-#define EFX_MEM_BAR 2
-#define EFX_MEM_VF_BAR 0
 
 int efx_net_open(struct net_device *net_dev);
 int efx_net_stop(struct net_device *net_dev);
@@ -39,7 +31,8 @@ extern unsigned int efx_piobuf_size;
 extern bool efx_separate_tx_channels;
 
 /* RX */
-void efx_set_default_rx_indir_table(struct efx_nic *efx);
+void efx_set_default_rx_indir_table(struct efx_nic *efx,
+				    struct efx_rss_context *ctx);
 void efx_rx_config_page_split(struct efx_nic *efx);
 int efx_probe_rx_queue(struct efx_rx_queue *rx_queue);
 void efx_remove_rx_queue(struct efx_rx_queue *rx_queue);
@@ -173,19 +166,57 @@ static inline s32 efx_filter_get_rx_ids(struct efx_nic *efx,
 #ifdef CONFIG_RFS_ACCEL
 int efx_filter_rfs(struct net_device *net_dev, const struct sk_buff *skb,
 		   u16 rxq_index, u32 flow_id);
-bool __efx_filter_rfs_expire(struct efx_nic *efx, unsigned quota);
-static inline void efx_filter_rfs_expire(struct efx_channel *channel)
+bool __efx_filter_rfs_expire(struct efx_channel *channel, unsigned int quota);
+static inline void efx_filter_rfs_expire(struct work_struct *data)
 {
-	if (channel->rfs_filters_added >= 60 &&
-	    __efx_filter_rfs_expire(channel->efx, 100))
-		channel->rfs_filters_added -= 60;
+	struct delayed_work *dwork = to_delayed_work(data);
+	struct efx_channel *channel;
+	unsigned int time, quota;
+
+	channel = container_of(dwork, struct efx_channel, filter_work);
+	time = jiffies - channel->rfs_last_expiry;
+	quota = channel->rfs_filter_count * time / (30 * HZ);
+	if (quota > 20 && __efx_filter_rfs_expire(channel, min(channel->rfs_filter_count, quota)))
+		channel->rfs_last_expiry += time;
+	/* Ensure we do more work eventually even if NAPI poll is not happening */
+	schedule_delayed_work(dwork, 30 * HZ);
 }
 #define efx_filter_rfs_enabled() 1
 #else
-static inline void efx_filter_rfs_expire(struct efx_channel *channel) {}
+static inline void efx_filter_rfs_expire(struct work_struct *data) {}
 #define efx_filter_rfs_enabled() 0
 #endif
 bool efx_filter_is_mc_recipient(const struct efx_filter_spec *spec);
+
+bool efx_filter_spec_equal(const struct efx_filter_spec *left,
+			   const struct efx_filter_spec *right);
+u32 efx_filter_spec_hash(const struct efx_filter_spec *spec);
+
+#ifdef CONFIG_RFS_ACCEL
+bool efx_rps_check_rule(struct efx_arfs_rule *rule, unsigned int filter_idx,
+			bool *force);
+
+struct efx_arfs_rule *efx_rps_hash_find(struct efx_nic *efx,
+					const struct efx_filter_spec *spec);
+
+/* @new is written to indicate if entry was newly added (true) or if an old
+ * entry was found and returned (false).
+ */
+struct efx_arfs_rule *efx_rps_hash_add(struct efx_nic *efx,
+				       const struct efx_filter_spec *spec,
+				       bool *new);
+
+void efx_rps_hash_del(struct efx_nic *efx, const struct efx_filter_spec *spec);
+#endif
+
+/* RSS contexts */
+struct efx_rss_context *efx_alloc_rss_context_entry(struct efx_nic *efx);
+struct efx_rss_context *efx_find_rss_context_entry(struct efx_nic *efx, u32 id);
+void efx_free_rss_context_entry(struct efx_rss_context *ctx);
+static inline bool efx_rss_active(struct efx_rss_context *ctx)
+{
+	return ctx->context_id != EFX_EF10_RSS_CONTEXT_INVALID;
+}
 
 /* Channels */
 int efx_channel_dummy_op_int(struct efx_channel *channel);
@@ -263,7 +294,9 @@ static inline void efx_schedule_channel_irq(struct efx_channel *channel)
 }
 
 void efx_link_status_changed(struct efx_nic *efx);
-void efx_link_set_advertising(struct efx_nic *efx, u32);
+void efx_link_set_advertising(struct efx_nic *efx,
+			      const unsigned long *advertising);
+void efx_link_clear_advertising(struct efx_nic *efx);
 void efx_link_set_wanted_fc(struct efx_nic *efx, u8);
 
 static inline void efx_device_detach_sync(struct efx_nic *efx)
@@ -293,5 +326,8 @@ static inline bool efx_rwsem_assert_write_locked(struct rw_semaphore *sem)
 	}
 	return true;
 }
+
+int efx_xdp_tx_buffers(struct efx_nic *efx, int n, struct xdp_frame **xdpfs,
+		       bool flush);
 
 #endif /* EFX_EFX_H */

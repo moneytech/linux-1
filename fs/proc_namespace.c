@@ -18,12 +18,12 @@
 #include "pnode.h"
 #include "internal.h"
 
-static unsigned mounts_poll(struct file *file, poll_table *wait)
+static __poll_t mounts_poll(struct file *file, poll_table *wait)
 {
 	struct seq_file *m = file->private_data;
 	struct proc_mounts *p = m->private;
 	struct mnt_namespace *ns = p->ns;
-	unsigned res = POLLIN | POLLRDNORM;
+	__poll_t res = EPOLLIN | EPOLLRDNORM;
 	int event;
 
 	poll_wait(file, &p->ns->poll, wait);
@@ -31,7 +31,7 @@ static unsigned mounts_poll(struct file *file, poll_table *wait)
 	event = READ_ONCE(ns->event);
 	if (m->poll_event != event) {
 		m->poll_event = event;
-		res |= POLLERR | POLLPRI;
+		res |= EPOLLERR | EPOLLPRI;
 	}
 
 	return res;
@@ -88,7 +88,7 @@ static inline void mangle(struct seq_file *m, const char *s)
 static void show_type(struct seq_file *m, struct super_block *sb)
 {
 	mangle(m, sb->s_type->name);
-	if (sb->s_subtype && sb->s_subtype[0]) {
+	if (sb->s_subtype) {
 		seq_putc(m, '.');
 		mangle(m, sb->s_subtype);
 	}

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 /*
  * dvb_ca.c: generic DVB functions for EN50221 CAM interfaces
  *
@@ -11,18 +12,6 @@
  *
  * Copyright (C) 1999-2002 Ralph  Metzler
  *                       & Marcus Metzler for convergence integrated media GmbH
- *
- * This program is free software; you can redistribute it and/or
- * modify it under the terms of the GNU General Public License
- * as published by the Free Software Foundation; either version 2
- * of the License, or (at your option) any later version.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
- * To obtain the license, point your browser to
- * http://www.gnu.org/copyleft/gpl.html
  */
 
 #define pr_fmt(fmt) "dvb_ca_en50221: " fmt
@@ -31,14 +20,15 @@
 #include <linux/slab.h>
 #include <linux/list.h>
 #include <linux/module.h>
+#include <linux/nospec.h>
 #include <linux/vmalloc.h>
 #include <linux/delay.h>
 #include <linux/spinlock.h>
 #include <linux/sched/signal.h>
 #include <linux/kthread.h>
 
-#include "dvb_ca_en50221.h"
-#include "dvb_ringbuffer.h"
+#include <media/dvb_ca_en50221.h>
+#include <media/dvb_ringbuffer.h>
 
 static int dvb_ca_en50221_debug;
 
@@ -786,7 +776,7 @@ exit:
  * @ca: CA instance.
  * @slot: Slot to write to.
  * @buf: The data in this buffer is treated as a complete link-level packet to
- * 	 be written.
+ *	 be written.
  * @bytes_write: Size of ebuf.
  *
  * return: Number of bytes written, or < 0 on error.
@@ -1254,8 +1244,8 @@ static void dvb_ca_en50221_thread_state_machine(struct dvb_ca_private *ca,
 		ca->pub->slot_ts_enable(ca->pub, slot);
 		sl->slot_state = DVB_CA_SLOTSTATE_RUNNING;
 		dvb_ca_en50221_thread_update_delay(ca);
-		pr_err("dvb_ca adapter %d: DVB CAM detected and initialised successfully\n",
-		       ca->dvbdev->adapter->num);
+		pr_info("dvb_ca adapter %d: DVB CAM detected and initialised successfully\n",
+			ca->dvbdev->adapter->num);
 		break;
 
 	case DVB_CA_SLOTSTATE_RUNNING:
@@ -1390,7 +1380,7 @@ static int dvb_ca_en50221_io_do_ioctl(struct file *file,
 		struct dvb_ca_slot *sl;
 
 		slot = info->num;
-		if ((slot > ca->slot_count) || (slot < 0)) {
+		if ((slot >= ca->slot_count) || (slot < 0)) {
 			err = -EINVAL;
 			goto out_unlock;
 		}
@@ -1473,6 +1463,10 @@ static ssize_t dvb_ca_en50221_io_write(struct file *file,
 		return -EFAULT;
 	buf += 2;
 	count -= 2;
+
+	if (slot >= ca->slot_count)
+		return -EINVAL;
+	slot = array_index_nospec(slot, ca->slot_count);
 	sl = &ca->slot_info[slot];
 
 	/* check if the slot is actually running */
@@ -1782,28 +1776,27 @@ static int dvb_ca_en50221_io_release(struct inode *inode, struct file *file)
  *
  * return: Standard poll mask.
  */
-static unsigned int dvb_ca_en50221_io_poll(struct file *file, poll_table *wait)
+static __poll_t dvb_ca_en50221_io_poll(struct file *file, poll_table *wait)
 {
 	struct dvb_device *dvbdev = file->private_data;
 	struct dvb_ca_private *ca = dvbdev->priv;
-	unsigned int mask = 0;
+	__poll_t mask = 0;
 	int slot;
 	int result = 0;
 
 	dprintk("%s\n", __func__);
 
+	poll_wait(file, &ca->wait_queue, wait);
+
 	if (dvb_ca_en50221_io_read_condition(ca, &result, &slot) == 1)
-		mask |= POLLIN;
+		mask |= EPOLLIN;
 
 	/* if there is something, return now */
 	if (mask)
 		return mask;
 
-	/* wait for something to happen */
-	poll_wait(file, &ca->wait_queue, wait);
-
 	if (dvb_ca_en50221_io_read_condition(ca, &result, &slot) == 1)
-		mask |= POLLIN;
+		mask |= EPOLLIN;
 
 	return mask;
 }

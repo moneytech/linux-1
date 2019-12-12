@@ -6,8 +6,7 @@
  * Copyright 2016 Linaro Ltd.
  */
 
-#include "greybus.h"
-
+#include <linux/greybus.h>
 #include <linux/cdev.h>
 #include <linux/fs.h>
 #include <linux/ioctl.h>
@@ -202,7 +201,7 @@ static int cap_release(struct inode *inode, struct file *file)
 }
 
 static int cap_ioctl(struct gb_cap *cap, unsigned int cmd,
-			 void __user *buf)
+		     void __user *buf)
 {
 	struct cap_ioc_get_endpoint_uid endpoint_uid;
 	struct cap_ioc_get_ims_certificate *ims_cert;

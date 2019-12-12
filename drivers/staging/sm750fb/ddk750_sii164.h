@@ -6,12 +6,14 @@
 
 /* Hot Plug detection mode structure */
 enum sii164_hot_plug_mode {
-	SII164_HOTPLUG_DISABLE = 0,         /* Disable Hot Plug output bit (always high). */
-	SII164_HOTPLUG_USE_MDI,             /* Use Monitor Detect Interrupt bit. */
-	SII164_HOTPLUG_USE_RSEN,            /* Use Receiver Sense detect bit. */
-	SII164_HOTPLUG_USE_HTPLG            /* Use Hot Plug detect bit. */
-};
+	SII164_HOTPLUG_DISABLE = 0,	/* Disable Hot Plug output bit
+					 * (always high).
+					 */
 
+	SII164_HOTPLUG_USE_MDI,         /* Use Monitor Detect Interrupt bit. */
+	SII164_HOTPLUG_USE_RSEN,        /* Use Receiver Sense detect bit. */
+	SII164_HOTPLUG_USE_HTPLG        /* Use Hot Plug detect bit. */
+};
 
 /* Silicon Image SiI164 chip prototype */
 long sii164InitChip(unsigned char edgeSelect,
@@ -27,7 +29,6 @@ long sii164InitChip(unsigned char edgeSelect,
 
 unsigned short sii164GetVendorID(void);
 unsigned short sii164GetDeviceID(void);
-
 
 #ifdef SII164_FULL_FUNCTIONS
 void sii164ResetChip(void);
